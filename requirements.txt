@@ -1,6 +1,6 @@
 beautifulsoup4==4.12.3
 html5lib
-certifi==2024.8.30
+certifi==2026.10.18
 charset-normalizer==3.4.0
 click==8.1.7
 idna==3.15
