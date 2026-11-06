@@ -58,13 +58,20 @@ if [ -z "$PIP" ]; then
 fi
 info "Using pip: $PIP"
 
+info "Creating virtual environment..."
+if [ ! -d "$SCRIPT_DIR/.venv" ]; then
+    "$PYTHON" -m venv "$SCRIPT_DIR/.venv"
+fi
+VENV_PY="$SCRIPT_DIR/.venv/bin/python"
+VENV_PIP="$SCRIPT_DIR/.venv/bin/pip"
 info "Installing darkdump dependencies..."
-$PIP install --quiet -r "$SCRIPT_DIR/requirements.txt"
+"$VENV_PIP" install --quiet -r "$SCRIPT_DIR/requirements.txt"
 
 if [ -f "$SCRIPT_DIR/darkdump-web/requirements.txt" ]; then
     info "Installing darkdump-web dependencies..."
-    $PIP install --quiet -r "$SCRIPT_DIR/darkdump-web/requirements.txt"
+    "$VENV_PIP" install --quiet -r "$SCRIPT_DIR/darkdump-web/requirements.txt"
 fi
+PYTHON="$VENV_PY"
 
 SYSTEM_BIN="/usr/local/bin"
 USER_BIN="$HOME/.local/bin"
