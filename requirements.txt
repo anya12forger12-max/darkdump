@@ -9,7 +9,7 @@ nltk==3.10.3
 PySocks==1.7.1
 regex==2024.11.6
 requests==2.33.0
-soupsieve==2.9.0
+soupsieve==4.0
 termcolor==2.5.0
 textblob==0.18.0.post0
 tqdm==4.67.1
