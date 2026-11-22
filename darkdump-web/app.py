@@ -541,5 +541,7 @@ if __name__ == '__main__':
     from darkdump import notice, Colors
     Banner().LoadDarkdumpBanner()
     print(notice)
-    print(f"  Web interface running at {Colors.BOLD}{Colors.G}http://127.0.0.1:50001{Colors.END}\n")
-    app.run(debug=False, host='127.0.0.1', port=50001, threaded=True)
+    host = os.environ.get('DARKDUMP_HOST', '127.0.0.1')
+    port = int(os.environ.get('DARKDUMP_PORT', '50001'))
+    print(f"  Web interface running at {Colors.BOLD}{Colors.G}http://{host}:{port}{Colors.END}\n")
+    app.run(debug=False, host=host, port=port, threaded=True)

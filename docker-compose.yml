@@ -1,0 +1,31 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: web
+    image: ${DARKDUMP_WEB_IMAGE:-darkdump-web:local}
+    container_name: darkdump-web
+    ports:
+      - "50001:50001"
+    environment:
+      DARKDUMP_HOST: "0.0.0.0"
+      DARKDUMP_PORT: "50001"
+    volumes:
+      # Reserved for files produced by CLI runs / future web exports.
+      - darkdump-data:/app/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c 'import os, sys, urllib.request;
+          url = "http://127.0.0.1:" + os.environ.get("DARKDUMP_PORT", "50001") + "/";
+          sys.exit(0 if urllib.request.urlopen(url, timeout=3).status == 200 else 1)'
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  darkdump-data:
