@@ -27,7 +27,7 @@ sys.dont_write_bytecode = True
 class Banner(object):
     def LoadDarkdumpBanner(self):
         try:
-            from termcolor import cprint, colored
+            from termcolor import cprint
             banner = r'''
      _            _       _                            __
   __| | __ _ _ __| | ____| |_   _ _ __ ___  _ __      / /
@@ -39,5 +39,5 @@ class Banner(object):
 
             cprint(banner, 'magenta', attrs=['bold'])
 
-        except ImportError as ie:
+        except ImportError:
             print(banner)

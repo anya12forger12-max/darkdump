@@ -1,0 +1,8 @@
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+# Keep lint scoped to real errors and unused names. Ruff 0.17 enables a much
+# broader default ruleset, which made the CI lint step fail as soon as ruff was
+# installed. Pinning the useful subset keeps the check deterministic.
+select = ["E9", "F"]

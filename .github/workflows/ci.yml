@@ -19,8 +19,7 @@ jobs:
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
           if [ -f darkdump-web/requirements.txt ]; then pip install -r darkdump-web/requirements.txt; fi
       - name: Lint
-        run: |
-          if command -v ruff >/dev/null 2>&1; then ruff check .; fi
+        run: ruff check .
       - name: Test
         run: |
           if [ -d tests ]; then python -m pytest -q; fi

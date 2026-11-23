@@ -44,7 +44,7 @@ DARKDUMP_DIR = _find_darkdump_root()
 if DARKDUMP_DIR not in sys.path:
     sys.path.insert(0, DARKDUMP_DIR)
 
-from darkdump import Darkdump, Configuration, AhmiaBlacklist
+from darkdump import Darkdump, Configuration
 from headers.agents import Headers             
 
 import random

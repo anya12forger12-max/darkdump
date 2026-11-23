@@ -26,18 +26,15 @@ __version__ = 4
 import sys
 sys.dont_write_bytecode = True
 
-import nltk
-
 import requests
 from bs4 import BeautifulSoup
 import os
 import time
 import argparse
+import hashlib
 import random
 import re
 import json
-import socket
-import hashlib
 
 from headers.agents import Headers
 from banner.banner import Banner
@@ -1134,7 +1131,6 @@ class Darkdump(object):
         python3 darkdump.py --breach -q "john_doe" -e tor66 -o report.json
         """
         import time as _time
-        import hashlib as _hashlib
 
         is_email  = '@' in target and '.' in target.split('@')[-1]
         is_domain = '.' in target and not is_email and ' ' not in target
@@ -1500,7 +1496,6 @@ class Darkdump(object):
 
 
 def darkdump_main():
-    clr = Colors()
     bn  = Banner()
 
     Platform(True).clean_screen()
