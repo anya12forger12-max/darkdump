@@ -7,8 +7,11 @@ services:
     image: ${DARKDUMP_WEB_IMAGE:-darkdump-web:local}
     container_name: darkdump-web
     ports:
-      - "50001:50001"
+      # The scan API is unauthenticated; keep it off the network by default.
+      - "127.0.0.1:50001:50001"
     environment:
+      # Inside the container the app must listen on all interfaces for Docker's
+      # port proxy; the host-side binding above restricts external access.
       DARKDUMP_HOST: "0.0.0.0"
       DARKDUMP_PORT: "50001"
     volumes:

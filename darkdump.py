@@ -28,13 +28,17 @@ sys.dont_write_bytecode = True
 
 import requests
 from bs4 import BeautifulSoup
+import ipaddress
 import os
+import socket
 import time
 import argparse
 import hashlib
 import random
 import re
 import json
+import html as html_module
+from urllib.parse import urljoin, urlparse
 
 from headers.agents import Headers
 from banner.banner import Banner
@@ -401,6 +405,77 @@ class AhmiaBlacklist:
             return False
 
 
+def _ip_is_internal(address: str) -> bool:
+    """Return True for addresses that must never be fetched by the scraper."""
+    try:
+        ip = ipaddress.ip_address(address.split('%', 1)[0])
+    except ValueError:
+        return True
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
+
+
+def is_safe_scrape_url(url: str, allow_onion: bool = False) -> bool:
+    """Validate a search result URL before the server fetches it.
+
+    Search results come from third-party engines, so they are untrusted. A
+    hostname-only check is not enough: DNS can point a public-looking name at
+    loopback, RFC1918 space or cloud metadata.
+    """
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ('http', 'https') or not parsed.hostname:
+            return False
+        if parsed.username or parsed.password:
+            return False
+        host = parsed.hostname.lower().rstrip('.')
+        if host.endswith('.onion'):
+            # Onion names cannot be resolved locally; they are only reachable
+            # through the explicitly configured Tor SOCKS proxy.
+            return bool(allow_onion)
+        if host in {'localhost', 'metadata.google.internal'} or host.endswith(
+            ('.localhost', '.local', '.internal')
+        ):
+            return False
+        try:
+            port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+        except ValueError:
+            return False
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        if not infos:
+            return False
+        return all(not _ip_is_internal(info[4][0]) for info in infos)
+    except (ValueError, OSError):
+        return False
+
+
+def get_validated(url: str, headers, proxies, timeout: int, allow_onion: bool = False):
+    """GET *url* while re-validating every redirect target."""
+    current = url
+    for _ in range(6):
+        if not is_safe_scrape_url(current, allow_onion):
+            raise ValueError(f'refusing to fetch unsafe URL: {current}')
+        response = requests.get(
+            current,
+            headers=headers,
+            proxies=proxies,
+            timeout=timeout,
+            allow_redirects=False,
+        )
+        location = response.headers.get('Location')
+        if response.status_code in (301, 302, 303, 307, 308) and location:
+            current = urljoin(current, location)
+            continue
+        return response
+    raise ValueError(f'too many redirects while fetching {url}')
+
+
 class Darkdump(object):
 
 
@@ -448,13 +523,26 @@ class Darkdump(object):
 
     def generate_html(self, image_urls, base_url):
         filename = self.sanitize_filename(base_url) + '.html'
-        filepath = os.path.join('dd_scrape_image_dump', filename)
-        os.makedirs('dd_scrape_image_dump', exist_ok=True)
+        output_dir = 'dd_scrape_image_dump'
+        os.makedirs(output_dir, exist_ok=True, mode=0o700)
+        filepath = os.path.join(output_dir, filename)
         html_content = '<html><head><title>Image Gallery</title></head><body>'
-        for url in image_urls:
-            html_content += f'<img src="{url}" alt="Image" style="padding: 10px; height: 200px;"><br>'
+        for raw_url in image_urls:
+            resolved = urljoin(base_url, str(raw_url))
+            parsed = urlparse(resolved)
+            if parsed.scheme not in ('http', 'https') or not parsed.netloc:
+                continue
+            # Image URLs come from scraped pages. Escape quotes and markup so
+            # a hostile `src` cannot inject script into the local gallery.
+            safe_url = html_module.escape(resolved, quote=True)
+            html_content += f'<img src="{safe_url}" alt="Image" style="padding: 10px; height: 200px;"><br>'
         html_content += '</body></html>'
-        with open(filepath, 'w') as f:
+
+        # The output name is predictable, so a local attacker could plant a
+        # symlink at this path and redirect the write to one of their files.
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, 'O_NOFOLLOW', 0)
+        fd = os.open(filepath, flags, 0o600)
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
             f.write(html_content)
         return filepath
 
@@ -903,7 +991,13 @@ class Darkdump(object):
         and optionally images. Returns a dict for ResultSaver, or None on failure.
         """
         try:
-            site_response = requests.get(site_url, headers=headers, proxies=proxy_config, timeout=20)
+            site_response = get_validated(
+                site_url,
+                headers,
+                proxy_config,
+                timeout=20,
+                allow_onion=bool(proxy_config),
+            )
             site_soup     = BeautifulSoup(site_response.content, 'html.parser')
             metadata      = self.extract_metadata(site_soup)
             links         = self.extract_links(site_soup)
@@ -916,7 +1010,6 @@ class Darkdump(object):
             if scrape_images:
                 images     = site_soup.find_all('img')
                 image_urls = [img['src'] for img in images if img.get('src')]
-                image_urls = [u if u.startswith('http') else site_url + u for u in image_urls]
                 if image_urls:
                     html_path           = self.generate_html(image_urls, site_url)
                     images_gallery_path = os.path.abspath(html_path)

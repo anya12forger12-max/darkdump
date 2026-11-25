@@ -53,6 +53,13 @@ import requests
 
 app = Flask(__name__)
 
+# Every scan request spawns a worker that performs many slow outbound HTTP
+# requests. Without a cap, an unauthenticated client can exhaust threads and
+# sockets simply by opening streams and disconnecting immediately.
+app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024  # bound unauthenticated /export
+MAX_CONCURRENT_SCANS = 4
+_scan_slots = threading.BoundedSemaphore(MAX_CONCURRENT_SCANS)
+
 PROXY_URL = Configuration.__socks5init__
 
 
@@ -130,19 +137,33 @@ def search():
     if engine['tor_required']:
         use_proxy = True
 
+    if not _scan_slots.acquire(blocking=False):
+        return Response(
+            stream_with_context(err_stream('Too many concurrent scans. Try again later.')),
+            mimetype='text/event-stream',
+        )
+
     proxy_config = _proxy_cfg() if use_proxy else {}
     result_queue: queue.Queue = queue.Queue()
+    cancel = threading.Event()
+
+    def emit(event, data):
+        # A disconnected SSE client has no one left to receive events.
+        if not cancel.is_set():
+            result_queue.put((event, data))
 
     def run_crawl():
         try:
+            if cancel.is_set():
+                return
             if use_proxy:
                 is_tor, tor_ip = _check_tor(proxy_config)
                 if not is_tor:
-                    result_queue.put(('error', {
+                    emit(('error', {
                         'message': 'Tor is not running or not reachable on localhost:9050.'
                     }))
                     return
-                result_queue.put(('tor_ok', {'ip': tor_ip}))
+                emit(('tor_ok', {'ip': tor_ip}))
 
             headers = {'User-Agent': random.choice(Headers.user_agents)}
             dd = Darkdump()
@@ -165,16 +186,18 @@ def search():
             results = dd._filter_blacklisted(results)
 
             if not results:
-                result_queue.put(('error', {'message': 'No results returned from engine.'}))
+                emit(('error', {'message': 'No results returned from engine.'}))
                 return
 
-            result_queue.put(('count', {'total': len(results)}))
+            emit(('count', {'total': len(results)}))
 
             seen_urls = set()
             seen_meta = set()
             idx = 0
 
             for result in results:
+                if cancel.is_set():
+                    break
                 site_url    = result.get('site_url', '')
                 title       = result.get('title', 'No title available')
                 description = result.get('description', 'No description available')
@@ -219,25 +242,30 @@ def search():
                     except Exception:
                         pass
 
-                result_queue.put(('result', payload))
+                emit(('result', payload))
 
         except Exception as exc:
-            result_queue.put(('error', {'message': str(exc)}))
+            emit(('error', {'message': str(exc)}))
         finally:
-            result_queue.put(('done', {}))
+            emit(('done', {}))
+            _scan_slots.release()
 
     threading.Thread(target=run_crawl, daemon=True).start()
 
     def stream():
-        while True:
-            try:
-                event, data = result_queue.get(timeout=120)
-                yield _sse(event, data)
-                if event == 'done':
+        try:
+            while True:
+                try:
+                    event, data = result_queue.get(timeout=120)
+                    yield _sse(event, data)
+                    if event == 'done':
+                        break
+                except queue.Empty:
+                    yield _sse('error', {'message': 'Search timed out.'})
                     break
-            except queue.Empty:
-                yield _sse('error', {'message': 'Search timed out.'})
-                break
+        finally:
+            # Mark the worker's events as undeliverable when the client leaves.
+            cancel.set()
 
     return Response(
         stream_with_context(stream()),
@@ -273,19 +301,32 @@ def breach():
     if engine['tor_required']:
         use_proxy = True
 
+    if not _scan_slots.acquire(blocking=False):
+        return Response(
+            stream_with_context(err_stream('Too many concurrent scans. Try again later.')),
+            mimetype='text/event-stream',
+        )
+
     proxy_config = _proxy_cfg() if use_proxy else {}
     result_queue: queue.Queue = queue.Queue()
+    cancel = threading.Event()
+
+    def emit(event, data):
+        if not cancel.is_set():
+            result_queue.put((event, data))
 
     def run_breach():
         try:
+            if cancel.is_set():
+                return
             if use_proxy:
                 is_tor, tor_ip = _check_tor(proxy_config)
                 if not is_tor:
-                    result_queue.put(('error', {
+                    emit(('error', {
                         'message': 'Tor is not running or not reachable on localhost:9050.'
                     }))
                     return
-                result_queue.put(('tor_ok', {'ip': tor_ip}))
+                emit(('tor_ok', {'ip': tor_ip}))
 
             import re as _re
             is_email  = '@' in target and '.' in target.split('@')[-1]
@@ -379,7 +420,7 @@ def breach():
                 if any(p in c for p in ['leak','dump','breach','stealer']): return 'leak-index'
                 return 'other'
 
-            result_queue.put(('breach_start', {
+            emit(('breach_start', {
                 'target':   target,
                 'type':     'email' if is_email else 'domain' if is_domain else 'keyword',
                 'queries':  len(queries),
@@ -392,7 +433,9 @@ def breach():
             total     = 0
 
             for q_idx, query in enumerate(queries, start=1):
-                result_queue.put(('breach_query', {'idx': q_idx, 'total': len(queries), 'query': query}))
+                if cancel.is_set():
+                    break
+                emit(('breach_query', {'idx': q_idx, 'total': len(queries), 'query': query}))
                 try:
                     results = []
                     if engine_key == 'ahmia':
@@ -412,6 +455,8 @@ def breach():
                     results = dd._filter_blacklisted(results)
 
                     for result in results:
+                        if cancel.is_set():
+                            break
                         site_url = result.get('site_url', '')
                         if not site_url or site_url in seen_urls:
                             continue
@@ -419,7 +464,7 @@ def breach():
                         total += 1
                         title = result.get('title', 'No title available')
                         desc  = result.get('description', 'No description available')
-                        result_queue.put(('result', {
+                        emit(('result', {
                             'idx':          total,
                             'title':        title,
                             'description':  desc,
@@ -431,25 +476,29 @@ def breach():
                             'scrape_data':  None,
                         }))
                 except Exception as e:
-                    result_queue.put(('error', {'message': f"Query failed: {e}"}))
+                    emit(('error', {'message': f"Query failed: {e}"}))
 
         except Exception as exc:
-            result_queue.put(('error', {'message': str(exc)}))
+            emit(('error', {'message': str(exc)}))
         finally:
-            result_queue.put(('done', {}))
+            emit(('done', {}))
+            _scan_slots.release()
 
     threading.Thread(target=run_breach, daemon=True).start()
 
     def stream():
-        while True:
-            try:
-                event, data = result_queue.get(timeout=120)
-                yield _sse(event, data)
-                if event == 'done':
+        try:
+            while True:
+                try:
+                    event, data = result_queue.get(timeout=120)
+                    yield _sse(event, data)
+                    if event == 'done':
+                        break
+                except queue.Empty:
+                    yield _sse('error', {'message': 'Breach scan timed out.'})
                     break
-            except queue.Empty:
-                yield _sse('error', {'message': 'Breach scan timed out.'})
-                break
+        finally:
+            cancel.set()
 
     return Response(
         stream_with_context(stream()),
@@ -465,7 +514,9 @@ def export():
     Returns the file as a download.
     """
     body    = request.get_json(force=True)
-    fmt     = body.get('format', 'json').lower()
+    if not isinstance(body, dict):
+        return Response('{"error":"JSON object required"}', status=400, mimetype='application/json')
+    fmt     = str(body.get('format', 'json')).lower()
     results = body.get('results', [])
     query   = body.get('query', '')
     engine  = body.get('engine', '')
