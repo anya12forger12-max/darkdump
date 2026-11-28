@@ -1,163 +1,91 @@
-# darkdump
+# Darkdump
 
-## About
+Open-source OSINT interface for deep-web search: query several engines, scrape result pages, and stream findings to a terminal or a local web UI.
 
-Darkdump is an open-source OSINT tool for deep web investigation. Given a search query it fetches results from multiple dark web search engines, optionally scrapes each result site for emails, metadata, keywords, documents, and images, and streams everything live to either the terminal or a local browser-based interface. All results are automatically filtered against Ahmia's public abuse blacklist regardless of which engine is used.
+> **Upstream / attribution:** Based on [josh0xA/darkdump](https://github.com/josh0xA/darkdump) by Josh Schiavone. This repository is a copy that also carries local CI, dependency, deployment, and security-hardening commits; please report issues upstream. MIT License © 2021 Josh Schiavone — see [LICENSE](LICENSE).
 
-## Installation
+Darkdump takes a search query, fetches results from multiple dark-web search engines, optionally deep-scrapes each result for emails, metadata, links, documents, and images, and exports or streams the results live. Regardless of the engine, result URLs are checked against Ahmia's public abuse blacklist.
 
-### Quick install (Linux & macOS)
+## Features
 
-```bash
-git clone https://github.com/josh0xA/darkdump
+- **Six engines** via `-e` / `--engine`: `ahmia` (default, no Tor required), `notevil`, `tordex`, `tor66`, `onionland`, and `excavator`. Engines without reliable filtering require an explicit confirmation before they run.
+- **Deep scraping** (`-s`) for page content and metadata, with optional image collection (`-i`, requires `-s`).
+- **Deduplication** of results sharing the same title and description (`-u`).
+- **Export** to JSON, CSV, or TXT, inferred from the output file extension (`-o`).
+- **Breach intelligence mode** (`--breach`, `--breach-deep`, `--breach-delay`) for credential-leak queries.
+- **Local web interface** with live result streaming, engine selection, a Tor proxy toggle with exit-IP display, breach mode, and the same export formats.
+- **Tor-aware** routing for engines that require it.
+
+## Install
+
+```sh
+git clone https://github.com/anya12forger12-max/darkdump.git
 cd darkdump
 chmod +x install.sh
 ./install.sh
-darkdump
 ```
-Note: ``./install.sh`` might require ``sudo`` for macOS. 
 
-This installs all dependencies and creates two commands:
+The installer creates two launchers: `darkdump` (web UI) and `darkdump-cli` (CLI). It may need `sudo` on macOS. To remove the launchers, run `./uninstall.sh`.
 
-| Command        | Description                                     |
-|----------------|-------------------------------------------------|
-| `darkdump`     | Launch the primary web interface                        |
-| `darkdump-cli` | Run the CLI tool                                |
+Manual install:
 
-### Manual install
-
-```bash
-git clone https://github.com/josh0xA/darkdump
-cd darkdump
+```sh
 pip3 install -r requirements.txt
 pip3 install -r darkdump-web/requirements.txt
+python3 darkdump.py --help
 ```
 
-To uninstall the launchers: `./uninstall.sh`
+Container deployment is available through the multi-stage `Dockerfile` (`cli` and `web` targets) and `docker-compose.yml`. The Compose file binds the web port to loopback because the scan API is unauthenticated.
 
-### Tor Configuration 
-To use Darkdump effectively, you need to configure Tor to allow your script to control it via the Tor control port. Here's how to set up your `torrc` file and verify that Tor is running: <br/>
+### Tor setup
 
-#### Step 1: Install Tor
-If Tor is not already installed on your system, you need to install it. Here's how you can install Tor on various operating systems:
+`-p` / `--proxy` routes requests through a SOCKS5 proxy at `socks5h://localhost:9050`, Tor's standard SOCKS port. Install Tor (`sudo apt install tor` on Debian/Kali/Ubuntu, `brew install tor` on macOS), then start it with `sudo systemctl start tor.service` or `brew services start tor`. Confirm Tor is listening on port 9050 before using `-p` or a Tor-only engine; the web interface can display the current exit IP through its Tor status endpoint.
 
-Debian/Kali/Ubuntu: `sudo apt install tor`<br/>
-MacOS: `brew install tor`<br/>
+## CLI usage
 
-#### Step 2: Configure the Tor torrc File<br/>
-Locate your torrc file. This file is usually found at `/etc/tor/torrc`on Linux and sometimes Mac. 
-
-Add the following lines to your torrc to enable the control port and set a control port password:
-```
-ControlPort 9051
-HashedControlPassword [YourHashedPasswordHere]
-```
-Replace `[YourHashedPasswordHere]` with a hashed password which can be generated using the `tor --hash-password` command: `tor --hash-password "my_password"`
-
-#### Step 3: Start Tor Service
-Linux: `sudo systemctl start tor.service`<br/>
-MacOS: `brew services start tor`<br/>
-
-## Search Engines
-
-Six engines are available via `-e` / `--engine`:
-
-| Engine       | Filtered | Requires Tor | Notes                                          |
-|--------------|----------|--------------|------------------------------------------------|
-| `ahmia`      | Yes      | No           | Default. Tor Project-endorsed, strict filtering |
-| `notevil`    | Partial  | Yes          | Ahmia fork with broader index                  |
-| `tordex`     | **No**   | Yes          | Fully uncensored — confirmation required       |
-| `tor66`      | **No**   | Yes          | Crawled index with directory — confirmation required |
-| `onionland`  | **No**   | Yes          | Indexes Tor, I2P, and clearnet — confirmation required |
-| `excavator`  | **No**   | Yes          | General dark web index — confirmation required |
-
-All engines have their results checked against Ahmia's blacklist. Unfiltered engines will prompt for confirmation before executing. This strategy is still not perfect, always use extreme caution and judgement when searching and scraping unfiltered engines. 
-
-## Darkdump Web Preview (Recommended) 
-
-<p align="center">
-  <img src="https://github.com/josh0xA/darkdump/blob/main/imgs/darkdump_example.png?raw=true" alt="Darkdump example">
-</p>
-
-
-## CLI Usage
-
-```
-darkdump-cli [-h] [-v] [-q QUERY] [-a AMOUNT] [-e ENGINE]
-             [-p] [-s] [-i] [-d] [-u] [-o FILE]
-             [--breach] [--breach-deep] [--breach-delay SECONDS]
-```
-
-| Flag | Description |
-|------|-------------|
-| `-q`, `--query` | Search query |
-| `-a`, `--amount` | Number of results to retrieve (default: 10) |
-| `-e`, `--engine` | Engine to use (default: `ahmia`) |
-| `-p`, `--proxy` | Route requests through Tor |
-| `-s`, `--scrape` | Deep scrape each result for metadata, links, emails, documents |
-| `-i`, `--images` | Also collect images during scrape (requires `-s`) |
-| `-u`, `--unique` | Hide results with duplicate title + description |
-| `-d`, `--debug` | Enable debug output |
-| `-o FILE`, `--output FILE` | Save results to file — format inferred from extension (`.json`, `.csv`, `.txt`) |
-| `--breach` | Run a breach / credential leak intelligence scan for the given target |
-| `--breach-deep` | Combine breach scan with deep scraping of each result |
-| `--breach-delay` | Seconds between breach queries to avoid rate limits (default: 1.5) |
-| `-v`, `--version` | Print version |
-
-### Examples
-
-```bash
-# Basic search via Ahmia (no Tor required)
+```sh
+# Basic Ahmia search (no Tor needed)
 darkdump-cli -q "privacy tools" -a 10
 
-# Search and deep scrape each result via Tor
-darkdump-cli -q "hacking" -a 10 -s -p
+# Search and deep-scrape through Tor
+darkdump-cli -q "your query" -a 10 -s -p
 
-# Search, scrape, and collect images
-darkdump-cli -q "marketplaces" -a 15 -s -p -i
+# Scrape images, deduplicate, save JSON
+darkdump-cli -q "your query" -a 15 -s -p -i -u -o results.json
 
-# Use Not Evil engine, deduplicate, save to JSON
-darkdump-cli -q "security research" -a 20 -e notevil -p -u -o results.json
+# Use Not Evil, save CSV
+darkdump-cli -q "your query" -a 20 -e notevil -p -o results.csv
 
-# Use OnionLand engine, save to CSV
-darkdump-cli -q "crypto" -a 10 -e onionland -p -o results.csv
-
-# Breach intelligence scan for an email address
+# Breach intelligence scan
 darkdump-cli --breach -q admin@example.com -e ahmia -p
-
-# Breach scan with deep scraping
-darkdump-cli --breach --breach-deep -q example.com -e ahmia
 ```
 
-## Web Interface
+Run `darkdump-cli -h` for the full flag list.
 
-Darkdump includes a local browser-based interface.
+## Web interface
 
-```bash
-# If installed via install.sh
-darkdump
-
-# Or run directly
-python3 darkdump-web/app.py
+```sh
+darkdump                       # launcher installed by install.sh
+python3 darkdump-web/app.py    # or run from source
 ```
 
-Then open `http://127.0.0.1:50001` in your browser.
+Open `http://127.0.0.1:50001` (override with the `DARKDUMP_PORT` environment variable). More details are in [DEPLOYMENT.md](DEPLOYMENT.md), [ONBOARDING.md](ONBOARDING.md), and [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
-### Features
+## Project layout
 
-- Live streaming results as they arrive
-- All six engines available via dropdown
-- Tor proxy toggle with live exit IP display
-- Deep scrape with optional image collection
-- Metadata-based deduplication
-- Breach intelligence scan mode
-- Export results as JSON, CSV, or TXT
+| Path | Purpose |
+| :--- | :--- |
+| `darkdump.py` | CLI and search/scraping implementation |
+| `darkdump-web/app.py` | Local Flask web interface |
+| `headers/`, `banner/` | Request headers and terminal banner helpers |
+| `install.sh`, `uninstall.sh` | Launcher installation and removal |
+| `Dockerfile`, `docker-compose.yml`, `vercel.json` | Deployment scaffolding |
+| `tests/` | Smoke tests |
 
+## Ethics and responsible use
 
-## Ethical Notice
-
-This tool is intended for legitimate security research and OSINT investigations only. The developer, Josh Schiavone, is not responsible for any misuse. Do not use Darkdump to access or investigate sites engaged in illegal activity under the laws and regulations of your jurisdiction. May God bless you all.
+Use Darkdump only for legitimate OSINT and security research where your activity is lawful. Do not access, host, or distribute illegal content, do not target people or systems without a proper basis, and treat every fetched page as untrusted input. The web scan API is unauthenticated, so keep the interface bound to loopback (the included Compose file does this by default). The original author, Josh Schiavone, disclaims responsibility for misuse.
 
 ## License
 
-MIT License — Copyright (c) Josh Schiavone
+MIT License — Copyright (c) 2021 Josh Schiavone. See [LICENSE](LICENSE). Project policies: [SECURITY.md](SECURITY.md), [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
